@@ -1,6 +1,6 @@
 #lang racket
 (require "env.rkt")
-(provide straw-eval closure)
+(provide straw-eval (struct-out closure))
 
 (struct closure (params body env) #:transparent)
 
@@ -44,6 +44,22 @@
         (closure params body env)]
        [(cons 'lambda _)
         (error "expected parameter list")]
+       [(cons 'and exprs)
+        (let loop ([es exprs])
+          (cond
+            [(null? es) #t]
+            [(null? (cdr es)) (straw-eval (car es) env)]
+            [else
+             (define val (straw-eval (car es) env))
+             (if (eq? val #f) #f (loop (cdr es)))]))]
+       [(cons 'or exprs)
+        (let loop ([es exprs])
+          (cond
+            [(null? es) #f]
+            [(null? (cdr es)) (straw-eval (car es) env)]
+            [else
+             (define val (straw-eval (car es) env))
+             (if (not (eq? val #f)) val (loop (cdr es)))]))]
        ;; Function application
        [(cons func-expr arg-exprs)
         (define func (straw-eval func-expr env))
