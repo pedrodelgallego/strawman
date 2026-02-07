@@ -1,5 +1,5 @@
 #lang racket
-(require "env.rkt")
+(require "env.rkt" "objects.rkt")
 (provide straw-eval (struct-out closure) (struct-out straw-macro))
 
 (struct closure (params body env) #:transparent)
@@ -341,6 +341,86 @@
        ;; the-environment: returns the current environment as a first-class value
        [(list 'the-environment)
         (k env)]
+       ;; define-class: (define-class Name (Parent) (field1 field2 ...))
+       [(list 'define-class (? symbol? name) (list parent-name ...) (list field-names ...))
+        ;; Validate field names are symbols
+        (unless (andmap symbol? field-names)
+          (error "define-class: field names must be symbols"))
+        ;; Check for duplicate fields in own fields
+        (let ([seen (make-hash)])
+          (for ([f (in-list field-names)])
+            (when (hash-has-key? seen f)
+              (error (format "duplicate field: ~a" f)))
+            (hash-set! seen f #t)))
+        ;; Resolve parent class
+        (define parent
+          (cond
+            [(null? parent-name) #f]
+            [else
+             (define pname (car parent-name))
+             (unless (symbol? pname)
+               (error "define-class: parent must be a symbol"))
+             (define p
+               (with-handlers ([exn:fail? (lambda (_) #f)])
+                 (env-lookup env pname)))
+             (unless (straw-class? p)
+               (error (format "unknown parent class: ~a" pname)))
+             p]))
+        (define cls (straw-class name parent field-names))
+        (env-set! env name cls)
+        ;; Auto-generate constructor, accessors, mutators, predicate
+        (define all-fields (straw-class-all-fields cls))
+        (define n-fields (length all-fields))
+        (define class-name-str (symbol->string name))
+        ;; Constructor: make-<Name>
+        (env-set! env (string->symbol (string-append "make-" class-name-str))
+                  (lambda args
+                    (unless (= (length args) n-fields)
+                      (error (format "arity mismatch: expected ~a, got ~a"
+                                     n-fields (length args))))
+                    (straw-instance cls (list->vector args))))
+        ;; Predicate: <Name>?
+        (env-set! env (string->symbol (string-append class-name-str "?"))
+                  (lambda (v)
+                    (and (straw-instance? v)
+                         (straw-class-is-a? (straw-instance-class v) cls))))
+        ;; Accessors and mutators for each field
+        (for ([field (in-list all-fields)]
+              [i (in-naturals)])
+          (define field-str (symbol->string field))
+          ;; Accessor: <Name>-<field>
+          (env-set! env (string->symbol (string-append class-name-str "-" field-str))
+                    (lambda (obj)
+                      (unless (and (straw-instance? obj)
+                                   (straw-class-is-a? (straw-instance-class obj) cls))
+                        (error (format "expected ~a" name)))
+                      (vector-ref (straw-instance-field-values obj) i)))
+          ;; Mutator: set-<Name>-<field>!
+          (env-set! env (string->symbol (string-append "set-" class-name-str "-" field-str "!"))
+                    (lambda (obj val)
+                      (unless (and (straw-instance? obj)
+                                   (straw-class-is-a? (straw-instance-class obj) cls))
+                        (error (format "expected ~a" name)))
+                      (vector-set! (straw-instance-field-values obj) i val)
+                      (void))))
+        (k (void))]
+       ;; define-generic: (define-generic name) — create a generic function
+       [(list 'define-generic (? symbol? name))
+        (env-set! env name (straw-generic name (make-hash)))
+        (k (void))]
+       ;; define-method: (define-method (generic-name (self ClassName) extra-params ...) body ...)
+       [(cons 'define-method (cons (cons (? symbol? gname) (cons (list (? symbol? self-name) (? symbol? class-name)) extra-params)) body))
+        (define gen (env-lookup env gname))
+        (unless (straw-generic? gen)
+          (error (format "define-method: ~a is not a generic" gname)))
+        (define cls (env-lookup env class-name))
+        (unless (straw-class? cls)
+          (error (format "define-method: ~a is not a class" class-name)))
+        ;; Build a closure that takes (self extra-params...)
+        (define all-params (cons self-name extra-params))
+        (define method (closure all-params body env))
+        (hash-set! (straw-generic-methods gen) cls method)
+        (k (void))]
        ;; eval: (eval expr) or (eval expr env) — evaluate expr as code
        [(list 'eval expr)
         (straw-eval/k expr env
@@ -378,4 +458,10 @@
                                                                      args))
                                         (eval-body (closure-body func) call-env k)]
                                        [(procedure? func) (k (apply func args))]
+                                       [(straw-generic? func)
+                                        (define method (straw-generic-dispatch func args))
+                                        (define call-env (env-extend (closure-env method)
+                                                                     (closure-params method)
+                                                                     args))
+                                        (eval-body (closure-body method) call-env k)]
                                        [else (error (format "not a procedure: ~a" func))])))))])]))

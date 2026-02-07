@@ -1,6 +1,7 @@
 #lang racket
 (require "env.rkt"
-         "eval.rkt")
+         "eval.rkt"
+         "objects.rkt")
 (provide default-env)
 
 (define (straw-add . args)
@@ -145,6 +146,12 @@
 (define (straw-environment? x)
   (env? x))
 
+(define (straw-is-a? obj cls)
+  (unless (straw-class? cls)
+    (error "is-a?: expected class as second argument"))
+  (and (straw-instance? obj)
+       (straw-class-is-a? (straw-instance-class obj) cls)))
+
 (define (straw-display x)
   (display x)
   (void))
@@ -187,6 +194,7 @@
   (env-set! e 'vector-length straw-vector-length)
   (env-set! e 'vector? straw-vector?)
   (env-set! e 'environment? straw-environment?)
+  (env-set! e 'is-a? straw-is-a?)
   (env-set! e 'display straw-display)
   (env-set! e 'newline straw-newline)
   e)
