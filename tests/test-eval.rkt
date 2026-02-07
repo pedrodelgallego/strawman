@@ -504,3 +504,47 @@
                    (a 2))
                 e3)
     10))
+
+;; ─── E8.1 — eval: Runtime evaluation ────────────────────
+
+(test-case "E8.1: eval simple quoted expression"
+  (define e (default-env))
+  (check-equal? (straw-eval '(eval (quote (+ 1 2))) e) 3))
+
+(test-case "E8.1: eval constructed expression via list"
+  (define e (default-env))
+  (check-equal? (straw-eval '(eval (list (quote *) 3 4)) e) 12))
+
+(test-case "E8.1: eval define modifies current environment"
+  (define e (default-env))
+  (check-equal? (straw-eval '(begin (eval (quote (define x 42))) x) e) 42))
+
+(test-case "E8.1: eval nested eval"
+  (define e (default-env))
+  (check-equal? (straw-eval '(eval (quote (eval (quote (+ 1 1))))) e) 2))
+
+(test-case "E8.1: eval non-list returns self-evaluating value"
+  (define e (default-env))
+  (check-equal? (straw-eval '(eval 42) e) 42))
+
+;; ─── E8.2 — First-class environments ────────────────────
+
+(test-case "E8.2: capture — the-environment captures current env"
+  (define e (default-env))
+  (check-equal? (straw-eval '(begin (define x 42) (define e (the-environment)) (eval (quote x) e)) e) 42))
+
+(test-case "E8.2: isolation — same env sees later defines"
+  (define e (default-env))
+  (check-equal? (straw-eval '(begin (define e (the-environment)) (define x 99) (eval (quote x) e)) e) 99))
+
+(test-case "E8.2: environment? type predicate returns #t for env"
+  (define e (default-env))
+  (check-equal? (straw-eval '(environment? (the-environment)) e) #t))
+
+(test-case "E8.2: environment? returns #f for non-env"
+  (define e (default-env))
+  (check-equal? (straw-eval '(environment? 42) e) #f))
+
+(test-case "E8.2: eval with env argument evaluates in given env"
+  (define e (default-env))
+  (check-equal? (straw-eval '(begin (define x 10) (define e (the-environment)) (eval (quote (+ x 1)) e)) e) 11))

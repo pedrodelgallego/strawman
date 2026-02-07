@@ -4,7 +4,8 @@
          env-lookup
          env-set!
          env-update!
-         env-extend)
+         env-extend
+         env?)
 
 ;; An environment is a hash table mapping symbols to boxes, with an optional parent.
 ;; Each binding is a box (mutable cell) so that closures sharing a binding

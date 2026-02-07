@@ -44,6 +44,15 @@
                        (eval-list (cdr exprs) env
                                   (lambda (vs) (k (cons v vs))))))))
 
+;; mlist->list : datum -> datum
+;; Convert mutable pairs (from Strawman's cons) to immutable pairs
+;; so the evaluator can process them as code.
+(define (mlist->list datum)
+  (cond
+    [(mpair? datum) (cons (mlist->list (mcar datum))
+                          (mlist->list (mcdr datum)))]
+    [else datum]))
+
 ;; straw-eval/k : s-expr × env × continuation -> value
 ;; The core CPS evaluator. Every result goes through k.
 (define (straw-eval/k expr env k)
@@ -217,6 +226,20 @@
         (straw-eval/k val-expr env
                       (lambda (v)
                         (raise (exn:straw-return-from name v))))]
+       ;; the-environment: returns the current environment as a first-class value
+       [(list 'the-environment)
+        (k env)]
+       ;; eval: (eval expr) or (eval expr env) — evaluate expr as code
+       [(list 'eval expr)
+        (straw-eval/k expr env
+                      (lambda (datum)
+                        (straw-eval/k (mlist->list datum) env k)))]
+       [(list 'eval expr env-expr)
+        (straw-eval/k expr env
+                      (lambda (datum)
+                        (straw-eval/k env-expr env
+                                      (lambda (eval-env)
+                                        (straw-eval/k (mlist->list datum) eval-env k)))))]
        ;; Function application
        [(cons func-expr arg-exprs)
         (straw-eval/k func-expr env

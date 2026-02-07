@@ -142,6 +142,9 @@
 (define (straw-vector? x)
   (vector? x))
 
+(define (straw-environment? x)
+  (env? x))
+
 (define (straw-display x)
   (display x)
   (void))
@@ -183,6 +186,7 @@
   (env-set! e 'vector-set! straw-vector-set!)
   (env-set! e 'vector-length straw-vector-length)
   (env-set! e 'vector? straw-vector?)
+  (env-set! e 'environment? straw-environment?)
   (env-set! e 'display straw-display)
   (env-set! e 'newline straw-newline)
   e)
