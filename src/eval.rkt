@@ -1,8 +1,12 @@
 #lang racket
 (require "env.rkt")
-(provide straw-eval (struct-out closure))
+(provide straw-eval (struct-out closure) (struct-out straw-macro))
 
 (struct closure (params body env) #:transparent)
+
+;; A macro is a transformer function: it receives unevaluated arguments
+;; and returns a new form to be evaluated.
+(struct straw-macro (params body env) #:transparent)
 
 ;; Exception struct for throw: carries a tag and a value.
 (struct exn:straw-throw (tag value) #:transparent)
@@ -43,6 +47,61 @@
                      (lambda (v)
                        (eval-list (cdr exprs) env
                                   (lambda (vs) (k (cons v vs))))))))
+
+;; eval-quasiquote : template × depth × env × continuation -> value
+;; Process a quasiquote template at a given nesting depth.
+;; At depth 0, unquote evaluates and unquote-splicing splices.
+;; At depth > 0, nested quasiquote/unquote are treated as data.
+(define (eval-quasiquote tmpl depth env k)
+  (cond
+    ;; (unquote expr) at depth 0: evaluate expr
+    [(and (pair? tmpl) (eq? (car tmpl) 'unquote) (= depth 0))
+     (straw-eval/k (cadr tmpl) env k)]
+    ;; (unquote expr) at depth > 0: decrease depth
+    [(and (pair? tmpl) (eq? (car tmpl) 'unquote))
+     (eval-quasiquote (cadr tmpl) (sub1 depth) env
+                      (lambda (v) (k (list 'unquote v))))]
+    ;; (quasiquote expr): increase depth
+    [(and (pair? tmpl) (eq? (car tmpl) 'quasiquote))
+     (eval-quasiquote (cadr tmpl) (add1 depth) env
+                      (lambda (v) (k (list 'quasiquote v))))]
+    ;; List: process elements, handling unquote-splicing
+    [(pair? tmpl)
+     (eval-qq-list tmpl depth env k)]
+    ;; Atom: return as-is
+    [else (k tmpl)]))
+
+;; eval-qq-list : list × depth × env × continuation -> value
+;; Process elements of a quasiquote list, handling splicing.
+(define (eval-qq-list elems depth env k)
+  (if (null? elems)
+      (k '())
+      (let ([head (car elems)]
+            [tail (cdr elems)])
+        (cond
+          ;; (unquote-splicing expr) at depth 0: evaluate and splice
+          [(and (pair? head) (eq? (car head) 'unquote-splicing) (= depth 0))
+           (straw-eval/k (cadr head) env
+                         (lambda (spliced)
+                           (eval-qq-list tail depth env
+                                        (lambda (rest)
+                                          (k (append (mlist->immutable-list spliced) rest))))))]
+          ;; Regular element: process recursively
+          [else
+           (eval-quasiquote head depth env
+                            (lambda (v)
+                              (eval-qq-list tail depth env
+                                           (lambda (rest)
+                                             (k (cons v rest))))))]))))
+
+;; mlist->immutable-list : datum -> list
+;; Convert a potentially mutable list (from Strawman's cons/list) to an immutable Racket list.
+(define (mlist->immutable-list datum)
+  (cond
+    [(null? datum) '()]
+    [(mpair? datum) (cons (mcar datum) (mlist->immutable-list (mcdr datum)))]
+    [(pair? datum) (cons (car datum) (mlist->immutable-list (cdr datum)))]
+    [else (error "unquote-splicing: expected list")]))
 
 ;; mlist->list : datum -> datum
 ;; Convert mutable pairs (from Strawman's cons) to immutable pairs
@@ -95,6 +154,28 @@
                       (lambda (v)
                         (env-update! env name v)
                         (k (void))))]
+       ;; define-macro: (define-macro (name params ...) body ...)
+       [(cons 'define-macro (cons (cons (? symbol? name) params) body))
+        #:when (andmap symbol? params)
+        (env-set! env name (straw-macro params body env))
+        (k (void))]
+       ;; macroexpand: (macroexpand '(macro-name args...)) — expand one level, don't eval
+       [(list 'macroexpand form-expr)
+        (straw-eval/k form-expr env
+                      (lambda (form)
+                        (if (and (pair? form) (symbol? (car form)))
+                            (let ([maybe-macro
+                                   (with-handlers ([exn:fail? (lambda (_) #f)])
+                                     (env-lookup env (car form)))])
+                              (if (straw-macro? maybe-macro)
+                                  (let* ([macro-env (env-extend (straw-macro-env maybe-macro)
+                                                                (straw-macro-params maybe-macro)
+                                                                (cdr form))]
+                                         [expanded (eval-body (straw-macro-body maybe-macro)
+                                                              macro-env values)])
+                                    (k (mlist->list expanded)))
+                                  (k form)))
+                            (k form))))]
        [(cons 'begin body*)
         (eval-body body* env k)]
        [(cons 'lambda (list (? (lambda (p) (and (list? p) (andmap symbol? p))) params) body ...))
@@ -226,6 +307,37 @@
         (straw-eval/k val-expr env
                       (lambda (v)
                         (raise (exn:straw-return-from name v))))]
+       ;; cond: (cond (test expr) ... (else expr)) → nested if
+       [(cons 'cond clauses)
+        (let expand-cond ([cs clauses])
+          (cond
+            [(null? cs) (k (void))]
+            [(and (pair? (car cs)) (eq? (caar cs) 'else))
+             (eval-body (cdar cs) env k)]
+            [(pair? (car cs))
+             (straw-eval/k (caar cs) env
+                           (lambda (tv)
+                             (if (not (eq? tv #f))
+                                 (eval-body (cdar cs) env k)
+                                 (expand-cond (cdr cs)))))]
+            [else (error "cond: bad clause")]))]
+       ;; when: (when test body ...) → (if test (begin body ...) void)
+       [(cons 'when (cons test body))
+        (straw-eval/k test env
+                      (lambda (tv)
+                        (if (not (eq? tv #f))
+                            (eval-body body env k)
+                            (k (void)))))]
+       ;; unless: (unless test body ...) → (if test void (begin body ...))
+       [(cons 'unless (cons test body))
+        (straw-eval/k test env
+                      (lambda (tv)
+                        (if (eq? tv #f)
+                            (eval-body body env k)
+                            (k (void)))))]
+       ;; quasiquote: template syntax with unquote and unquote-splicing
+       [(list 'quasiquote template)
+        (eval-quasiquote template 0 env k)]
        ;; the-environment: returns the current environment as a first-class value
        [(list 'the-environment)
         (k env)]
@@ -240,7 +352,20 @@
                         (straw-eval/k env-expr env
                                       (lambda (eval-env)
                                         (straw-eval/k (mlist->list datum) eval-env k)))))]
-       ;; Function application
+       ;; Function application (check for macro first)
+       [(cons func-expr arg-exprs)
+        #:when (and (symbol? func-expr)
+                    (let ([v (with-handlers ([exn:fail? (lambda (_) #f)])
+                               (env-lookup env func-expr))])
+                      (straw-macro? v)))
+        ;; Macro application: call transformer with unevaluated args, then eval result
+        (let* ([mac (env-lookup env func-expr)]
+               [macro-env (env-extend (straw-macro-env mac)
+                                      (straw-macro-params mac)
+                                      arg-exprs)]
+               [expanded (eval-body (straw-macro-body mac) macro-env values)])
+          (straw-eval/k (mlist->list expanded) env k))]
+       ;; Regular function application
        [(cons func-expr arg-exprs)
         (straw-eval/k func-expr env
                       (lambda (func)

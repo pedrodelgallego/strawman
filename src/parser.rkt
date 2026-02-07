@@ -16,6 +16,15 @@
     [(cons (token 'QUOTE _) rest)
      (define-values (quoted remaining) (parse rest))
      (values (list 'quote quoted) remaining)]
+    [(cons (token 'BACKTICK _) rest)
+     (define-values (quoted remaining) (parse rest))
+     (values (list 'quasiquote quoted) remaining)]
+    [(cons (token 'COMMA _) rest)
+     (define-values (unquoted remaining) (parse rest))
+     (values (list 'unquote unquoted) remaining)]
+    [(cons (token 'COMMA-SPLICE _) rest)
+     (define-values (unquoted remaining) (parse rest))
+     (values (list 'unquote-splicing unquoted) remaining)]
     [_ (error "parse: unexpected token")]))
 
 ;; parse-list : (listof token) -> (values list (listof token))

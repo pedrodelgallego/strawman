@@ -77,6 +77,14 @@
             ;; Quote sugar: '
             [(char=? ch #\')
              (loop (add1 i) (cons (token 'QUOTE "'") tokens))]
+            ;; Quasiquote sugar: `
+            [(char=? ch #\`)
+             (loop (add1 i) (cons (token 'BACKTICK "`") tokens))]
+            ;; Unquote-splicing: ,@ and unquote: ,
+            [(char=? ch #\,)
+             (if (and (< (add1 i) len) (char=? (string-ref input (add1 i)) #\@))
+                 (loop (+ i 2) (cons (token 'COMMA-SPLICE ",@") tokens))
+                 (loop (add1 i) (cons (token 'COMMA ",") tokens)))]
             ;; Symbols: any non-whitespace, non-paren sequence
             [else
              (define-values (sym-str end) (read-symbol input i len))
@@ -88,6 +96,7 @@
     (cond
       [(>= j len) (values (substring input i j) j)]
       [(let ([c (string-ref input j)])
-         (or (char-whitespace? c) (char=? c #\() (char=? c #\))))
+         (or (char-whitespace? c) (char=? c #\() (char=? c #\))
+             (char=? c #\') (char=? c #\`) (char=? c #\,)))
        (values (substring input i j) j)]
       [else (loop (add1 j))])))
