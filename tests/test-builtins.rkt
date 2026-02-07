@@ -135,11 +135,11 @@
 
 (test-case "Cons onto list: (cons 1 '(2 3)) returns (1 2 3)"
   (define e (default-env))
-  (check-equal? (straw-eval '(cons 1 (quote (2 3))) e) '(1 2 3)))
+  (check-equal? (straw-eval '(cons 1 (quote (2 3))) e) (mcons 1 '(2 3))))
 
 (test-case "Cons dotted: (cons 1 2) returns (1 . 2)"
   (define e (default-env))
-  (check-equal? (straw-eval '(cons 1 2) e) '(1 . 2)))
+  (check-equal? (straw-eval '(cons 1 2) e) (mcons 1 2)))
 
 ;; E1.13 — List operations: car / cdr
 
@@ -177,7 +177,7 @@
 
 (test-case "List many: (list 1 2 3) returns (1 2 3)"
   (define e (default-env))
-  (check-equal? (straw-eval '(list 1 2 3) e) '(1 2 3)))
+  (check-equal? (straw-eval '(list 1 2 3) e) (mcons 1 (mcons 2 (mcons 3 '())))))
 
 ;; E1.13 — List operations: null? / pair?
 

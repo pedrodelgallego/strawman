@@ -435,7 +435,7 @@
                          (cons (f (car lst)) (map f (cdr lst)))))
                    (map (lambda (x) (* x x)) (quote (1 2 3 4))))
                 e)
-    '(1 4 9 16)))
+    (mcons 1 (mcons 4 (mcons 9 (mcons 16 '()))))))
 
 ;; E2.5 — Filter with lambda
 (test-case "E2.5: filter with lambda selects elements"
@@ -450,7 +450,7 @@
                              (filter p (cdr lst)))))
                    (filter (lambda (x) (> x 2)) (quote (1 2 3 4 5))))
                 e)
-    '(3 4 5)))
+    (mcons 3 (mcons 4 (mcons 5 '())))))
 
 ;; E2.5 — Closure scope: lexical vs dynamic
 (test-case "E2.5: closure uses lexical scope, not dynamic"

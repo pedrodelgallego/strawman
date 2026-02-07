@@ -6,19 +6,21 @@
          env-update!
          env-extend)
 
-;; An environment is a mutable hash table with an optional parent.
+;; An environment is a hash table mapping symbols to boxes, with an optional parent.
+;; Each binding is a box (mutable cell) so that closures sharing a binding
+;; share the same box and see each other's mutations via set!.
 (struct env (bindings parent) #:transparent)
 
 (define (make-env [parent #f])
   (env (make-hash) parent))
 
 (define (env-set! e sym val)
-  (hash-set! (env-bindings e) sym val))
+  (hash-set! (env-bindings e) sym (box val)))
 
 (define (env-update! e sym val)
   (cond
     [(hash-has-key? (env-bindings e) sym)
-     (hash-set! (env-bindings e) sym val)]
+     (set-box! (hash-ref (env-bindings e) sym) val)]
     [(env-parent e)
      (env-update! (env-parent e) sym val)]
     [else
@@ -36,7 +38,7 @@
 (define (env-lookup e sym)
   (cond
     [(hash-has-key? (env-bindings e) sym)
-     (hash-ref (env-bindings e) sym)]
+     (unbox (hash-ref (env-bindings e) sym))]
     [(env-parent e)
      (env-lookup (env-parent e) sym)]
     [else
