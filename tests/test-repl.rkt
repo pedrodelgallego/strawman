@@ -3,6 +3,101 @@
          racket/system
          "../src/repl.rkt")
 
+;; ============================================================
+;; E7.4 — REPL with --compiled flag
+;; All REPL tests pass in both interpreted and compiled modes
+;; ============================================================
+
+(test-case "compiled REPL: simple expression prints result"
+  (define input (open-input-string "42\n"))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-true (string-contains? out "42")))
+
+(test-case "compiled REPL: computation prints result"
+  (define input (open-input-string "(+ 1 2)\n"))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-regexp-match #rx"strawman> 3\n" out))
+
+(test-case "compiled REPL: define then use across inputs"
+  (define input (open-input-string "(define x 5)\nx\n"))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-equal? out "strawman> strawman> 5\nstrawman> "))
+
+(test-case "compiled REPL: error recovery"
+  (define input (open-input-string "(/ 1 0)\n42\n"))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-regexp-match #rx"Error: division by zero" out)
+  (check-equal? out "strawman> Error: division by zero\nstrawman> 42\nstrawman> "))
+
+(test-case "compiled REPL: unbound variable error and recovery"
+  (define input (open-input-string "foo\n42\n"))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-regexp-match #rx"Error: unbound variable: foo" out)
+  (check-equal? out "strawman> Error: unbound variable: foo\nstrawman> 42\nstrawman> "))
+
+(test-case "compiled REPL: (exit) terminates"
+  (define input (open-input-string "(exit)\n"))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-equal? out "strawman> "))
+
+(test-case "compiled REPL: (quit) terminates"
+  (define input (open-input-string "(quit)\n"))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-equal? out "strawman> "))
+
+(test-case "compiled REPL: EOF terminates"
+  (define input (open-input-string ""))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-equal? out "strawman> "))
+
+(test-case "compiled REPL: lambda and closures"
+  (define input (open-input-string "((lambda (x) (+ x 1)) 41)\n"))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-regexp-match #rx"strawman> 42\n" out))
+
+(test-case "compiled REPL: multi-line input"
+  (define input (open-input-string "(+ 1\n   2)\n"))
+  (define output (open-output-string))
+  (run-repl input output #:compiled? #t)
+  (define out (get-output-string output))
+  (check-regexp-match #rx"strawman> " out)
+  (check-regexp-match #rx"\\.\\.\\.      " out)
+  (check-regexp-match #rx"3\n" out))
+
+(test-case "compiled REPL: strawman.rkt --compiled flag"
+  (define-values (proc stdout stdin stderr)
+    (subprocess #f #f #f
+                (find-executable-path "racket")
+                (path->string (build-path (current-directory) ".." "strawman.rkt"))
+                "--compiled"))
+  (display "(+ 10 20)\n" stdin)
+  (display "(exit)\n" stdin)
+  (close-output-port stdin)
+  (define output (port->string stdout))
+  (close-input-port stdout)
+  (close-input-port stderr)
+  (subprocess-wait proc)
+  (check-true (string-contains? output "strawman> "))
+  (check-true (string-contains? output "30")))
+
 ;; Test: Simple expression → prints result
 ;; E1.16 Test Matrix row 1: input `42` should print `42`
 (test-case "simple expression prints result"

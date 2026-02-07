@@ -3,7 +3,9 @@
          "parser.rkt"
          "eval.rkt"
          "env.rkt"
-         "builtins.rkt")
+         "builtins.rkt"
+         "compiler.rkt"
+         "vm.rkt")
 (provide run-repl run-file (struct-out exn:straw:exit))
 
 (struct exn:straw:exit exn:fail () #:transparent)
@@ -39,9 +41,11 @@
          [(char=? ch #\)) (loop (add1 i) (sub1 depth) #f)]
          [else (loop (add1 i) depth #f)])])))
 
-;; run-repl : [input-port] [output-port] -> void
+;; run-repl : [input-port] [output-port] [#:compiled? boolean] -> void
 ;; Read-eval-print loop. Reads from input, writes to output.
-(define (run-repl [in (current-input-port)] [out (current-output-port)])
+;; When #:compiled? is #t, uses compile→VM pipeline instead of tree-walking eval.
+(define (run-repl [in (current-input-port)] [out (current-output-port)]
+                  #:compiled? [compiled? #f])
   (define env (default-env))
   (env-set! env 'exit (lambda ()
                         (raise (exn:straw:exit "exit" (current-continuation-marks)))))
@@ -74,7 +78,11 @@
            (define tokens (tokenize input))
            (when (not (null? tokens))
              (define-values (expr remaining) (parse tokens))
-             (define result (straw-eval expr env))
+             (define result
+               (if compiled?
+                   (let ([code (append (compile expr) '((HALT)))])
+                     (vm-execute code env))
+                   (straw-eval expr env)))
              (unless (void? result)
                (fprintf out "~a\n" result)))
            #f))
