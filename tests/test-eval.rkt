@@ -1,7 +1,8 @@
 #lang racket
 (require rackunit
          "../src/eval.rkt"
-         "../src/env.rkt")
+         "../src/env.rkt"
+         "../src/builtins.rkt")
 
 (test-case "Integer evaluates to itself"
   (define e (make-env))
@@ -249,3 +250,257 @@
   (check-exn #rx"not a procedure: hello"
              (lambda () (straw-eval '("hello" 1) e))))
 
+;; E2.1 — let: Simple binding
+(test-case "let with single binding returns body value"
+  (define e (make-env))
+  (check-equal? (straw-eval '(let ((x 1)) x) e) 1))
+
+;; E2.1 — let: Two bindings
+(test-case "let with two bindings evaluates body with both bound"
+  (define e (make-env))
+  (env-set! e '+ +)
+  (check-equal? (straw-eval '(let ((x 1) (y 2)) (+ x y)) e) 3))
+
+;; E2.1 — let: Shadowing / outer unchanged
+(test-case "let shadowing does not affect outer environment"
+  (define e (make-env))
+  ;; Inner let shadows x to 20, but outer x remains 10
+  (check-equal? (straw-eval '(begin (define x 10) (let ((x 20)) x) x) e) 10)
+  ;; Also verify the let body itself sees the shadowed value
+  (define e2 (make-env))
+  (check-equal? (straw-eval '(begin (define x 10) (let ((x 20)) x)) e2) 20))
+
+;; E2.1 — let: Parallel semantics (init exprs evaluated in outer env)
+(test-case "let parallel semantics: init exprs cannot see other let bindings"
+  (define e (make-env))
+  (check-exn #rx"unbound variable: x"
+             (lambda () (straw-eval '(let ((x 1) (y x)) y) e))))
+
+;; E2.1 — let: Body implicit begin
+(test-case "let body supports implicit begin with define"
+  (define e (make-env))
+  (env-set! e '+ +)
+  (check-equal? (straw-eval '(let ((x 1)) (define y 2) (+ x y)) e) 3))
+
+;; E2.1 — let: Nested let
+(test-case "nested let accesses outer let bindings"
+  (define e (make-env))
+  (env-set! e '+ +)
+  (check-equal? (straw-eval '(let ((x 1)) (let ((y 2)) (+ x y))) e) 3))
+
+;; E2.1 — let: Empty bindings
+(test-case "let with empty bindings evaluates body"
+  (define e (make-env))
+  (check-equal? (straw-eval '(let () 42) e) 42))
+
+;; E2.1 — let: Malformed binding
+(test-case "let with malformed binding list raises error"
+  (define e (make-env))
+  (check-exn #rx"malformed binding"
+             (lambda () (straw-eval '(let (x 1) x) e))))
+
+;; E2.2 — let*: Sequential deps
+(test-case "let* sequential: second binding sees first"
+  (define e (make-env))
+  (env-set! e '+ +)
+  (check-equal? (straw-eval '(let* ((x 1) (y (+ x 1))) y) e) 2))
+
+;; E2.2 — let*: Three deps
+(test-case "let* three deps: each binding sees all previous"
+  (define e (make-env))
+  (env-set! e '+ +)
+  (check-equal? (straw-eval '(let* ((a 1) (b (+ a 1)) (c (+ b 1))) c) e) 3))
+
+;; E2.2 — let*: Shadow across
+(test-case "let* shadow across: same name can be rebound sequentially"
+  (define e (make-env))
+  (env-set! e '+ +)
+  (check-equal? (straw-eval '(let* ((x 1) (x (+ x 1))) x) e) 2))
+
+;; E2.2 — let*: Empty
+(test-case "let* with empty bindings evaluates body"
+  (define e (make-env))
+  (check-equal? (straw-eval '(let* () 42) e) 42))
+
+;; E2.3 — letrec: Non-lambda value
+(test-case "letrec with non-lambda value binds simple expression"
+  (define e (make-env))
+  (check-equal? (straw-eval '(letrec ((x 42)) x) e) 42))
+
+;; E2.3 — letrec: Self-recursive (factorial)
+(test-case "letrec self-recursive factorial computes 5!"
+  (define e (make-env))
+  (env-set! e '<= <=)
+  (env-set! e '* *)
+  (env-set! e '- -)
+  (check-equal? (straw-eval '(letrec ((f (lambda (n) (if (<= n 0) 1 (* n (f (- n 1)))))))
+                                (f 5))
+                            e)
+                120))
+
+;; E2.4 — Define shorthand: Simple
+(test-case "define shorthand: simple identity function"
+  (define e (make-env))
+  (check-equal? (straw-eval '(begin (define (f x) x) (f 42)) e) 42))
+
+;; E2.4 — Define shorthand: Multi-param
+(test-case "define shorthand: multiple parameters"
+  (define e (make-env))
+  (env-set! e '+ +)
+  (check-equal? (straw-eval '(begin (define (add a b) (+ a b)) (add 3 4)) e) 7))
+
+;; E2.4 — Define shorthand: With body (implicit begin with internal define)
+(test-case "define shorthand: body with internal define"
+  (define e (make-env))
+  (env-set! e '+ +)
+  (check-equal? (straw-eval '(begin (define (g x) (define y 1) (+ x y)) (g 5)) e) 6))
+
+;; E2.4 — Define shorthand: Recursive
+(test-case "define shorthand: recursive factorial"
+  (define e (make-env))
+  (env-set! e '<= <=)
+  (env-set! e '* *)
+  (env-set! e '- -)
+  (check-equal? (straw-eval '(begin (define (fact n) (if (<= n 1) 1 (* n (fact (- n 1))))) (fact 5)) e) 120))
+
+;; E2.4 — Define shorthand: No params
+(test-case "define shorthand: no parameters"
+  (define e (make-env))
+  (check-equal? (straw-eval '(begin (define (f) 42) (f)) e) 42))
+
+;; E2.3 — letrec: Mutual recursion (even?/odd?)
+(test-case "letrec mutual recursion: even? and odd? call each other"
+  (define e (make-env))
+  (env-set! e '= =)
+  (env-set! e '- -)
+  (check-equal? (straw-eval '(letrec ((even? (lambda (n) (if (= n 0) #t (odd? (- n 1)))))
+                                       (odd?  (lambda (n) (if (= n 0) #f (even? (- n 1))))))
+                                (even? 4))
+                            e)
+                #t)
+  (check-equal? (straw-eval '(letrec ((even? (lambda (n) (if (= n 0) #t (odd? (- n 1)))))
+                                       (odd?  (lambda (n) (if (= n 0) #f (even? (- n 1))))))
+                                (odd? 3))
+                            e)
+                #t))
+
+;; ─── E2.5 — Integration: Recursion and scoping ────────────────────
+
+;; Factorial 0 / factorial 10
+(test-case "E2.5: factorial 0 returns 1"
+  (define e (make-env))
+  (env-set! e '<= <=)
+  (env-set! e '* *)
+  (env-set! e '- -)
+  (check-equal?
+    (straw-eval '(begin
+                   (define (fact n) (if (<= n 1) 1 (* n (fact (- n 1)))))
+                   (fact 0))
+                e)
+    1))
+
+(test-case "E2.5: factorial 10 returns 3628800"
+  (define e (make-env))
+  (env-set! e '<= <=)
+  (env-set! e '* *)
+  (env-set! e '- -)
+  (check-equal?
+    (straw-eval '(begin
+                   (define (fact n) (if (<= n 1) 1 (* n (fact (- n 1)))))
+                   (fact 10))
+                e)
+    3628800))
+
+;; Fibonacci 10
+(test-case "E2.5: fibonacci 10 returns 55"
+  (define e (make-env))
+  (env-set! e '<= <=)
+  (env-set! e '+ +)
+  (env-set! e '- -)
+  (check-equal?
+    (straw-eval '(begin
+                   (define (fib n) (if (<= n 1) n (+ (fib (- n 1)) (fib (- n 2)))))
+                   (fib 10))
+                e)
+    55))
+
+;; E2.5 — Map with lambda
+(test-case "E2.5: map with lambda squares a list"
+  (define e (default-env))
+  (check-equal?
+    (straw-eval '(begin
+                   (define (map f lst)
+                     (if (null? lst)
+                         (quote ())
+                         (cons (f (car lst)) (map f (cdr lst)))))
+                   (map (lambda (x) (* x x)) (quote (1 2 3 4))))
+                e)
+    '(1 4 9 16)))
+
+;; E2.5 — Filter with lambda
+(test-case "E2.5: filter with lambda selects elements"
+  (define e (default-env))
+  (check-equal?
+    (straw-eval '(begin
+                   (define (filter p lst)
+                     (if (null? lst)
+                         (quote ())
+                         (if (p (car lst))
+                             (cons (car lst) (filter p (cdr lst)))
+                             (filter p (cdr lst)))))
+                   (filter (lambda (x) (> x 2)) (quote (1 2 3 4 5))))
+                e)
+    '(3 4 5)))
+
+;; E2.5 — Closure scope: lexical vs dynamic
+(test-case "E2.5: closure uses lexical scope, not dynamic"
+  (define e (default-env))
+  ;; f captures x=10 from its definition site.
+  ;; g defines a local x=20 and calls f.
+  ;; If lexical: f sees x=10 → returns 10.
+  ;; If dynamic: f would see x=20 → returns 20.
+  (check-equal?
+    (straw-eval '(begin
+                   (define x 10)
+                   (define (f) x)
+                   (define (g) (define x 20) (f))
+                   (g))
+                e)
+    10))
+
+;; E2.5 — Accumulator: mutable closure
+(test-case "E2.5: accumulator via mutable closure"
+  (define e (default-env))
+  ;; make-acc returns a closure that mutates captured variable n
+  (check-equal?
+    (straw-eval '(begin
+                   (define (make-acc init)
+                     (define n init)
+                     (lambda (x) (set! n (+ n x)) n))
+                   (define a (make-acc 0))
+                   (a 5))
+                e)
+    5)
+  (define e2 (default-env))
+  (check-equal?
+    (straw-eval '(begin
+                   (define (make-acc init)
+                     (define n init)
+                     (lambda (x) (set! n (+ n x)) n))
+                   (define a (make-acc 0))
+                   (a 5)
+                   (a 3))
+                e2)
+    8)
+  (define e3 (default-env))
+  (check-equal?
+    (straw-eval '(begin
+                   (define (make-acc init)
+                     (define n init)
+                     (lambda (x) (set! n (+ n x)) n))
+                   (define a (make-acc 0))
+                   (a 5)
+                   (a 3)
+                   (a 2))
+                e3)
+    10))
