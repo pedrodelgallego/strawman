@@ -74,6 +74,9 @@
              (loop (add1 i) (cons (token 'LPAREN "(") tokens))]
             [(char=? ch #\))
              (loop (add1 i) (cons (token 'RPAREN ")") tokens))]
+            ;; Quote sugar: '
+            [(char=? ch #\')
+             (loop (add1 i) (cons (token 'QUOTE "'") tokens))]
             ;; Symbols: any non-whitespace, non-paren sequence
             [else
              (define-values (sym-str end) (read-symbol input i len))
